@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package pkg;
+
+option go_package = ".";
+
+enum JobStatus {
+    SCHEDULED = 0;
+    UNKNOWN = 1;
+    FAILED = 2;
+}
+
+// Integers are unique identifiers for a job
+message Job {
+    string name = 1;
+    string function = 2;
+    string run_at = 3;  // todo: change to timestamp
+}
+
+message UpcomingJobs {
+  repeated Job jobs = 1;
+}
+
+message Worker {
+    string name = 1;
+}
+
+service ScheduleJobService {
+    rpc GetUpcomingJobs(Worker) returns (stream UpcomingJobs);
+}
