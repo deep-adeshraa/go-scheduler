@@ -1,9 +1,13 @@
 package pkg
 
 import (
+	"bufio"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
+
+	_ "github.com/lib/pq" // <------------ here
 )
 
 var POSTGRES_URL = "user=postgres dbname=ubico password='root' host=localhost port=5432 sslmode=disable"
@@ -35,7 +39,7 @@ func (s *Scheduler) Close() {
 }
 
 func (s *Scheduler) CreateJob(job *Job) error {
-	_, err := s.db.Exec("INSERT INTO jobs (name, function, run_at) VALUES ($1, $2, $3)", job.Name, job.Function, job.RunAt)
+	_, err := s.db.Exec("INSERT INTO personal_test_job_schedules (id, function, scheduled_at) VALUES ($1, $2, $3)", job.Id, job.Function, job.ScheduledAt)
 	return err
 }
 
@@ -46,14 +50,14 @@ func (s *Scheduler) UpdateJob(job *Job) error {
 	}
 
 	// Lock the row for update
-	_, err = tx.Exec("SELECT * FROM jobs WHERE name = $1 FOR UPDATE", job.Name)
+	_, err = tx.Exec("SELECT * FROM personal_test_job_schedules WHERE id = $1 FOR UPDATE", job.Id)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 
 	// Update the job
-	_, err = tx.Exec("UPDATE jobs SET function = $1, run_at = $2 WHERE name = $3", job.Function, job.RunAt, job.Name)
+	_, err = tx.Exec("UPDATE personal_test_job_schedules SET function = $1, scheduled_at = $2 WHERE id = $3", job.Function, job.ScheduledAt, job.Id)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -75,14 +79,14 @@ func (s *Scheduler) DeleteJob(name string) error {
 	}
 
 	// Lock the row for update
-	_, err = tx.Exec("SELECT * FROM jobs WHERE name = $1 FOR UPDATE", name)
+	_, err = tx.Exec("SELECT * FROM personal_test_job_schedules WHERE name = $1 FOR UPDATE", name)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 
 	// Delete the job
-	_, err = tx.Exec("DELETE FROM jobs WHERE name = $1", name)
+	_, err = tx.Exec("DELETE FROM personal_test_job_schedules WHERE name = $1", name)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -103,10 +107,11 @@ func (s *Scheduler) GetJob(name string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	name = strings.TrimSpace(name)
 
-	row := tx.QueryRow("SELECT name, function, run_at FROM jobs WHERE name = $1 FOR SHARE", name)
+	row := tx.QueryRow("SELECT id, function, scheduled_at FROM personal_test_job_schedules WHERE name = '" + name + "' FOR SHARE")
 	job := &Job{}
-	err = row.Scan(&job.Name, &job.Function, &job.RunAt)
+	err = row.Scan(&job.Id, &job.Function, &job.ScheduledAt)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -125,7 +130,7 @@ func createJobCommand(commandParts []string, s *Scheduler) {
 	}()
 
 	// CREATE JOB job1 hello_world 2021-01-01T00:00:00Z
-	job := &Job{Name: commandParts[2], Function: commandParts[3], RunAt: commandParts[4]}
+	job := &Job{Id: commandParts[2], Function: commandParts[3], ScheduledAt: commandParts[4]}
 
 	err := s.CreateJob(job)
 	if err != nil {
@@ -143,7 +148,7 @@ func updateJobCommand(commandParts []string, s *Scheduler) {
 	}()
 
 	// UPDATE JOB job1 hello_world_updated 2021-01-01T00:00:00Z
-	job := &Job{Name: commandParts[2], Function: commandParts[3], RunAt: commandParts[4]}
+	job := &Job{Id: commandParts[2], Function: commandParts[3], ScheduledAt: commandParts[4]}
 
 	err := s.UpdateJob(job)
 	if err != nil {
@@ -195,9 +200,14 @@ func (s *Scheduler) Start() {
 		"\n: GET JOB job1")
 
 	for {
-		var command string
-		fmt.Scanln(&command)
-		fmt.Println("Command: ", command)
+		in := bufio.NewReader(os.Stdin)
+
+		command, err := in.ReadString('\n')
+
+		if err != nil {
+			fmt.Println("Error reading command: ", err)
+			continue
+		}
 
 		if command == "EXIT" {
 			break

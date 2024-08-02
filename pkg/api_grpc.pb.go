@@ -26,7 +26,6 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ScheduleJobServiceClient interface {
-	// rpc ScheduleJob(google.protobuf.Empty) returns (stream UpcomingJobs);
 	GetUpcomingJobs(ctx context.Context, in *Worker, opts ...grpc.CallOption) (ScheduleJobService_GetUpcomingJobsClient, error)
 }
 
@@ -74,7 +73,6 @@ func (x *scheduleJobServiceGetUpcomingJobsClient) Recv() (*UpcomingJobs, error) 
 // All implementations must embed UnimplementedScheduleJobServiceServer
 // for forward compatibility
 type ScheduleJobServiceServer interface {
-	// rpc ScheduleJob(google.protobuf.Empty) returns (stream UpcomingJobs);
 	GetUpcomingJobs(*Worker, ScheduleJobService_GetUpcomingJobsServer) error
 	mustEmbedUnimplementedScheduleJobServiceServer()
 }

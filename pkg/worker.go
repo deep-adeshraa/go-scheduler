@@ -2,7 +2,9 @@ package pkg
 
 import (
 	context "context"
+	"database/sql"
 	"fmt"
+	"time"
 
 	grpc "google.golang.org/grpc"
 )
@@ -15,9 +17,15 @@ type JobWorker struct {
 	cancel      context.CancelFunc
 	port        string // co-ordinator port
 	host        string // co-ordinator host
+	db          *sql.DB
 }
 
 func NewJobWorker(workerID string) *JobWorker {
+	db, err := ConnectToDB()
+	if err != nil {
+		panic(err)
+	}
+
 	context, cancel := context.WithCancel(context.Background())
 	return &JobWorker{
 		workerID: workerID,
@@ -25,6 +33,7 @@ func NewJobWorker(workerID string) *JobWorker {
 		cancel:   cancel,
 		port:     "50051",
 		host:     "localhost",
+		db:       db,
 	}
 }
 
@@ -38,6 +47,55 @@ func (j *JobWorker) connectToCoordinator() {
 
 	j.grpc_conn = conn
 	j.grpc_client = NewScheduleJobServiceClient(j.grpc_conn)
+}
+
+func (j *JobWorker) ProcessJob(job *Job) {
+	fmt.Println("Processing job: ", job)
+	scheduledAt := job.ScheduledAt
+	now := time.Now().UTC()
+
+	// convert string scheduledAt to time.Time
+	scheduledAtTime, err := time.Parse(time.RFC3339, scheduledAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	// if the job is scheduled for the future, sleep until it's time to process the job
+	if scheduledAtTime.After(now) {
+		fmt.Println("Job scheduled for the future. Sleeping until scheduled time")
+		time.Sleep(scheduledAtTime.Sub(now))
+	} else {
+		fmt.Println("Now = ", now, " ScheduledAt = ", scheduledAtTime, scheduledAtTime.After(now))
+	}
+
+	tx, err := j.db.Begin()
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = tx.Exec("SELECT * FROM personal_test_job_schedules WHERE id = $1 FOR UPDATE", job.Id)
+	if err != nil {
+		tx.Rollback()
+		panic(err)
+	}
+	fmt.Println("Job started processing")
+	_, err = tx.Exec("UPDATE personal_test_job_schedules SET started_at=NOW() WHERE id = $1", job.Id)
+
+	if err != nil {
+		tx.Rollback()
+		panic(err)
+	}
+	fmt.Println("Job completed processing")
+	_, err = tx.Exec("UPDATE personal_test_job_schedules SET completed_at=NOW() WHERE id = $1", job.Id)
+
+	if err != nil {
+		tx.Rollback()
+		panic(err)
+	}
+	tx.Commit()
+
+	fmt.Println("Job processed successfully")
 }
 
 func (j *JobWorker) StartReceivingJobs() {
@@ -62,6 +120,7 @@ func (j *JobWorker) StartReceivingJobs() {
 			// Do something with the job
 			for _, job := range jobs.Jobs {
 				fmt.Println("Received job: ", job)
+				j.ProcessJob(job)
 			}
 		}
 	}

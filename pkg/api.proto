@@ -12,9 +12,9 @@ enum JobStatus {
 
 // Integers are unique identifiers for a job
 message Job {
-    string name = 1;
+    string id = 1;
     string function = 2;
-    string run_at = 3;  // todo: change to timestamp
+    string scheduled_at = 3;
 }
 
 message UpcomingJobs {

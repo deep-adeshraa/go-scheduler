@@ -5,19 +5,18 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"strings"
 	"time"
-
-	"golang.org/x/sync/semaphore"
 
 	grpc "google.golang.org/grpc"
 )
 
 type workerStream ScheduleJobService_GetUpcomingJobsServer
 
-type RegisteredWorkerSteams struct {
-	worker    *Worker
-	stream    workerStream
-	semaphore *semaphore.Weighted
+type RegisteredWorkerSteam struct {
+	worker       *Worker
+	stream       workerStream
+	upcomingJobs chan *UpcomingJobs
 }
 
 type JobCoordinator struct {
@@ -28,7 +27,7 @@ type JobCoordinator struct {
 	port          string
 	host          string
 	context       context.Context
-	workerStreams []RegisteredWorkerSteams
+	workerStreams []RegisteredWorkerSteam
 	cancel        context.CancelFunc
 }
 
@@ -45,7 +44,7 @@ func NewJobCoordinator() *JobCoordinator {
 		port:          "50051",
 		host:          "localhost",
 		cancel:        cancel,
-		workerStreams: []RegisteredWorkerSteams{},
+		workerStreams: []RegisteredWorkerSteam{},
 	}
 }
 
@@ -69,17 +68,38 @@ func (j *JobCoordinator) StartGRPCServer() {
 }
 
 func (j *JobCoordinator) GetUpcomingJobs(worker *Worker, stream ScheduleJobService_GetUpcomingJobsServer) error {
-	j.workerStreams = append(j.workerStreams, RegisteredWorkerSteams{
+	fmt.Println("Worker connected: ", worker.Name)
+
+	registeredWorkerStream := RegisteredWorkerSteam{
 		worker,
 		stream,
-		semaphore.NewWeighted(1),
-	})
+		make(chan *UpcomingJobs),
+	}
+
+	j.workerStreams = append(j.workerStreams, registeredWorkerStream)
+
+	fmt.Println("total workers: ", len(j.workerStreams))
+
+	// fire a go routine to get the next jobs
+	go j.GetNextJobs(registeredWorkerStream)
 
 	// Keep the stream open
 	for {
 		select {
+		case upcomingJobs := <-registeredWorkerStream.upcomingJobs:
+			if err := stream.Send(upcomingJobs); err != nil {
+				return err
+			}
 		// Wait for the client to close the stream
 		case <-stream.Context().Done():
+			// Remove the worker from the list
+			for i, workerStream := range j.workerStreams {
+				if workerStream.worker.Name == worker.Name {
+					j.workerStreams = append(j.workerStreams[:i], j.workerStreams[i+1:]...)
+					break
+				}
+			}
+			fmt.Println("Worker disconnected: ", worker.Name)
 			return nil
 			// Wait for the broker to shutdown
 		case <-j.context.Done():
@@ -95,52 +115,63 @@ func (j *JobCoordinator) Stop() {
 	j.db.Close()
 }
 
-func (j *JobCoordinator) GetNextJobs() []*Job {
-	// Get the next jobs from the database
-	// return the jobs
-	rows, err := j.db.Query("SELECT * FROM jobs ORDER BY RunAt ASC LIMIT 10")
+func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
+	for {
+		tx, err := j.db.Begin()
+		if err != nil {
+			panic(err)
+		}
 
-	if err != nil {
-		fmt.Println("Failed to get jobs: ", err)
-		return nil
-	}
-
-	defer rows.Close()
-
-	jobs := []*Job{}
-
-	for rows.Next() {
-		job := Job{}
-		err := rows.Scan(&job.Name, &job.Function, &job.RunAt)
+		// Get the next jobs from the database
+		// return the jobs
+		rows, err := tx.Query("SELECT id, function, scheduled_at FROM personal_test_job_schedules " +
+			"where scheduled_at > NOW() and scheduled_at < NOW() + INTERVAL '30 seconds' " +
+			"AND picked_at IS NULL " +
+			"ORDER BY scheduled_at ASC FOR UPDATE")
 
 		if err != nil {
-			continue
+			fmt.Println("Failed to get jobs: ", err)
+			tx.Rollback()
+			return
 		}
 
-		jobs = append(jobs, &job)
-	}
+		jobs := []*Job{}
 
-	return jobs
-}
+		for rows.Next() {
+			job := Job{}
+			err := rows.Scan(&job.Id, &job.Function, &job.ScheduledAt)
 
-func (j *JobCoordinator) SendJobsToWorkers() {
-	for {
-		if j.context.Done() != nil {
-			break
-		}
-
-		for _, workerStream := range j.workerStreams {
-			jobs := j.GetNextJobs()
-			upcomingJobs := &UpcomingJobs{Jobs: jobs}
-
-			if workerStream.semaphore.TryAcquire(1) {
-				workerStream.stream.Send(upcomingJobs)
-				workerStream.semaphore.Release(1)
-			} else {
+			if err != nil {
 				continue
 			}
 
+			jobs = append(jobs, &job)
 		}
-		time.Sleep(2 * time.Second)
+
+		if len(jobs) == 0 {
+			err = tx.Commit()
+			if err != nil {
+				fmt.Println("Failed to commit transaction: ", err)
+				return
+			}
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		jobIds := make([]string, len(jobs))
+		for i, job := range jobs {
+			jobIds[i] = job.Id
+		}
+
+		tx.Exec("UPDATE personal_test_job_schedules SET picked_at=NOW() WHERE id IN (" + strings.Join(jobIds, ",") + ")")
+
+		err = tx.Commit()
+		if err != nil {
+			fmt.Println("Failed to commit transaction: ", err)
+			return
+		}
+
+		r.upcomingJobs <- &UpcomingJobs{Jobs: jobs}
+		time.Sleep(10 * time.Second)
 	}
 }
