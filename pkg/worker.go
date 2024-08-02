@@ -52,8 +52,7 @@ func (j *JobWorker) connectToCoordinator() {
 func (j *JobWorker) ProcessJob(job *Job) {
 	fmt.Println("Processing job: ", job)
 	scheduledAt := job.ScheduledAt
-	now := time.Now().UTC()
-
+	now := time.Now()
 	// convert string scheduledAt to time.Time
 	scheduledAtTime, err := time.Parse(time.RFC3339, scheduledAt)
 
@@ -69,31 +68,19 @@ func (j *JobWorker) ProcessJob(job *Job) {
 		fmt.Println("Now = ", now, " ScheduledAt = ", scheduledAtTime, scheduledAtTime.After(now))
 	}
 
-	tx, err := j.db.Begin()
-	if err != nil {
-		panic(err)
-	}
-
-	_, err = tx.Exec("SELECT * FROM personal_test_job_schedules WHERE id = $1 FOR UPDATE", job.Id)
-	if err != nil {
-		tx.Rollback()
-		panic(err)
-	}
 	fmt.Println("Job started processing")
-	_, err = tx.Exec("UPDATE personal_test_job_schedules SET started_at=NOW() WHERE id = $1", job.Id)
+	_, err = j.db.Exec("UPDATE personal_test_job_schedules SET started_at=NOW() WHERE id = $1", job.Id)
 
 	if err != nil {
-		tx.Rollback()
 		panic(err)
 	}
+
 	fmt.Println("Job completed processing")
-	_, err = tx.Exec("UPDATE personal_test_job_schedules SET completed_at=NOW() WHERE id = $1", job.Id)
+	_, err = j.db.Exec("UPDATE personal_test_job_schedules SET completed_at=NOW() WHERE id = $1", job.Id)
 
 	if err != nil {
-		tx.Rollback()
 		panic(err)
 	}
-	tx.Commit()
 
 	fmt.Println("Job processed successfully")
 }
