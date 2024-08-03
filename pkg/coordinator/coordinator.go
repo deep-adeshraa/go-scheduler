@@ -1,26 +1,28 @@
-package pkg
+package coordinator
 
 import (
 	context "context"
 	"database/sql"
+	api_grpc "deep-adeshraa/task-scheduler/pkg/api_grpc"
+	utils "deep-adeshraa/task-scheduler/pkg/utils"
 	"fmt"
+	grpc "google.golang.org/grpc"
+
 	"net"
 	"strings"
 	"time"
-
-	grpc "google.golang.org/grpc"
 )
 
-type workerStream ScheduleJobService_GetUpcomingJobsServer
+type workerStream api_grpc.ScheduleJobService_GetUpcomingJobsServer
 
 type RegisteredWorkerSteam struct {
-	worker       *Worker
+	worker       *api_grpc.Worker
 	stream       workerStream
-	upcomingJobs chan *UpcomingJobs
+	upcomingJobs chan *api_grpc.UpcomingJobs
 }
 
 type JobCoordinator struct {
-	UnimplementedScheduleJobServiceServer
+	api_grpc.UnimplementedScheduleJobServiceServer
 	db            *sql.DB
 	listener      net.Listener
 	grpcServer    *grpc.Server
@@ -32,7 +34,7 @@ type JobCoordinator struct {
 }
 
 func NewJobCoordinator() *JobCoordinator {
-	db, err := ConnectToDB()
+	db, err := utils.ConnectToDB()
 	if err != nil {
 		panic(err)
 	}
@@ -60,20 +62,20 @@ func (j *JobCoordinator) StartGRPCServer() {
 	grpcServer := grpc.NewServer()
 	j.listener = listener
 	j.grpcServer = grpcServer
-	RegisterScheduleJobServiceServer(grpcServer, j)
+	api_grpc.RegisterScheduleJobServiceServer(grpcServer, j)
 
 	if err := j.grpcServer.Serve(j.listener); err != nil {
 		fmt.Println("Failed to serve: ", err)
 	}
 }
 
-func (j *JobCoordinator) GetUpcomingJobs(worker *Worker, stream ScheduleJobService_GetUpcomingJobsServer) error {
+func (j *JobCoordinator) GetUpcomingJobs(worker *api_grpc.Worker, stream api_grpc.ScheduleJobService_GetUpcomingJobsServer) error {
 	fmt.Println("Worker connected: ", worker.Name)
 
 	registeredWorkerStream := RegisteredWorkerSteam{
 		worker,
 		stream,
-		make(chan *UpcomingJobs),
+		make(chan *api_grpc.UpcomingJobs),
 	}
 
 	j.workerStreams = append(j.workerStreams, registeredWorkerStream)
@@ -108,6 +110,28 @@ func (j *JobCoordinator) GetUpcomingJobs(worker *Worker, stream ScheduleJobServi
 	}
 }
 
+func (j *JobCoordinator) UpdateJobStatus(ctx context.Context, in *api_grpc.UpdateJobStatusRequest) (*api_grpc.Job, error) {
+	update_column := "started_at"
+
+	switch in.Status {
+	case api_grpc.JobStatus_COMPLETED:
+		update_column = "completed_at"
+	case api_grpc.JobStatus_FAILED:
+		update_column = "failed_at"
+	case api_grpc.JobStatus_STARTED:
+		update_column = "started_at"
+	}
+
+	_, err := j.db.Exec("UPDATE personal_test_job_schedules SET "+update_column+"=$1 WHERE id=$2", time.Now(), in.Job.Id)
+
+	if err != nil {
+		fmt.Println("Failed to update job status: ", err)
+		return nil, err
+	}
+
+	return in.Job, nil
+}
+
 func (j *JobCoordinator) Stop() {
 	j.cancel()
 	j.grpcServer.Stop()
@@ -127,7 +151,7 @@ func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 		rows, err := tx.Query("SELECT id, function, scheduled_at FROM personal_test_job_schedules " +
 			"where scheduled_at > NOW() and scheduled_at < NOW() + INTERVAL '30 seconds' " +
 			"AND picked_at IS NULL " +
-			"ORDER BY scheduled_at ASC FOR UPDATE")
+			"ORDER BY scheduled_at ASC FOR UPDATE SKIP LOCKED")
 
 		if err != nil {
 			fmt.Println("Failed to get jobs: ", err)
@@ -135,10 +159,10 @@ func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 			return
 		}
 
-		jobs := []*Job{}
+		jobs := []*api_grpc.Job{}
 
 		for rows.Next() {
-			job := Job{}
+			job := api_grpc.Job{}
 			err := rows.Scan(&job.Id, &job.Function, &job.ScheduledAt)
 
 			if err != nil {
@@ -171,7 +195,7 @@ func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 			return
 		}
 
-		r.upcomingJobs <- &UpcomingJobs{Jobs: jobs}
+		r.upcomingJobs <- &api_grpc.UpcomingJobs{Jobs: jobs}
 		time.Sleep(10 * time.Second)
 	}
 }

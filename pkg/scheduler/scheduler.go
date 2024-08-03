@@ -1,4 +1,4 @@
-package pkg
+package scheduler
 
 import (
 	"bufio"
@@ -7,27 +7,19 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/lib/pq" // <------------ here
+	api_grpc "deep-adeshraa/task-scheduler/pkg/api_grpc"
+	utils "deep-adeshraa/task-scheduler/pkg/utils"
+	_ "github.com/lib/pq"
 )
 
-var POSTGRES_URL = "user=postgres dbname=ubico password='root' host=localhost port=5432 sslmode=disable"
 
-func ConnectToDB() (*sql.DB, error) {
-	db, err := sql.Open("postgres", POSTGRES_URL)
-
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Successfully connected to database")
-	return db, err
-}
 
 type Scheduler struct {
 	db *sql.DB
 }
 
 func NewScheduler() *Scheduler {
-	db, err := ConnectToDB()
+	db, err := utils.ConnectToDB()
 	if err != nil {
 		panic(err)
 	}
@@ -38,12 +30,12 @@ func (s *Scheduler) Close() {
 	s.db.Close()
 }
 
-func (s *Scheduler) CreateJob(job *Job) error {
+func (s *Scheduler) CreateJob(job *api_grpc.Job) error {
 	_, err := s.db.Exec("INSERT INTO personal_test_job_schedules (id, function, scheduled_at) VALUES ($1, $2, $3)", job.Id, job.Function, job.ScheduledAt)
 	return err
 }
 
-func (s *Scheduler) UpdateJob(job *Job) error {
+func (s *Scheduler) UpdateJob(job *api_grpc.Job) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -102,7 +94,7 @@ func (s *Scheduler) DeleteJob(name string) error {
 	return nil
 }
 
-func (s *Scheduler) GetJob(name string) (*Job, error) {
+func (s *Scheduler) GetJob(name string) (*api_grpc.Job, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -110,7 +102,7 @@ func (s *Scheduler) GetJob(name string) (*Job, error) {
 	name = strings.TrimSpace(name)
 
 	row := tx.QueryRow("SELECT id, function, scheduled_at FROM personal_test_job_schedules WHERE name = '" + name + "' FOR SHARE")
-	job := &Job{}
+	job := &api_grpc.Job{}
 	err = row.Scan(&job.Id, &job.Function, &job.ScheduledAt)
 	if err != nil {
 		tx.Rollback()
@@ -130,7 +122,7 @@ func createJobCommand(commandParts []string, s *Scheduler) {
 	}()
 
 	// CREATE JOB job1 hello_world 2021-01-01T00:00:00Z
-	job := &Job{Id: commandParts[2], Function: commandParts[3], ScheduledAt: commandParts[4]}
+	job := &api_grpc.Job{Id: commandParts[2], Function: commandParts[3], ScheduledAt: commandParts[4]}
 
 	err := s.CreateJob(job)
 	if err != nil {
@@ -148,7 +140,7 @@ func updateJobCommand(commandParts []string, s *Scheduler) {
 	}()
 
 	// UPDATE JOB job1 hello_world_updated 2021-01-01T00:00:00Z
-	job := &Job{Id: commandParts[2], Function: commandParts[3], ScheduledAt: commandParts[4]}
+	job := &api_grpc.Job{Id: commandParts[2], Function: commandParts[3], ScheduledAt: commandParts[4]}
 
 	err := s.UpdateJob(job)
 	if err != nil {
@@ -173,7 +165,7 @@ func deleteJobCommand(commandParts []string, s *Scheduler) {
 	}
 }
 
-func getJobCommand(commandParts []string, s *Scheduler) *Job {
+func getJobCommand(commandParts []string, s *Scheduler) *api_grpc.Job {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Error getting job: ", r)
