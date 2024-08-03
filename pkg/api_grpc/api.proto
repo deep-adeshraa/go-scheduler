@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package pkg;
+
+option go_package = ".";
+
+enum JobStatus {
+    SCHEDULED = 0;
+    STARTED = 2;
+    COMPLETED = 1;
+    FAILED = 3;
+}
+
+// Integers are unique identifiers for a job
+message Job {
+    string id = 1;
+    string function = 2;
+    string scheduled_at = 3;
+}
+
+message UpcomingJobs {
+  repeated Job jobs = 1;
+}
+
+message Worker {
+    string name = 1;
+}
+
+message UpdateJobStatusRequest {
+    Job job = 1;
+    JobStatus status = 2;
+}
+
+service ScheduleJobService {
+    rpc GetUpcomingJobs(Worker) returns (stream UpcomingJobs);
+    rpc UpdateJobStatus(UpdateJobStatusRequest) returns (Job);
+}
