@@ -182,12 +182,13 @@ func (j *JobCoordinator) Stop() error {
 
 func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 	defer j.wg.Done()
+	ticker := time.NewTicker(10 * time.Second)
 
 	for {
 		select {
 		case <-j.context.Done():
 			return
-		default:
+		case <-ticker.C:
 			tx, err := j.db.Begin()
 			if err != nil {
 				panic(err)
@@ -243,8 +244,8 @@ func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 			}
 
 			r.upcomingJobs <- &api_grpc.UpcomingJobs{Jobs: jobs}
-			time.Sleep(10 * time.Second)
-
+		default:
+			return
 		}
 	}
 }
