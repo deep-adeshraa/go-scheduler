@@ -171,7 +171,7 @@ func (j *JobCoordinator) Stop() error {
 	// send a signal to all the go routines to stop
 	j.cancel()
 
-	// j.wg.Wait() // wait for all the go routines to finish
+	j.wg.Wait() // wait for all the go routines to finish
 
 	j.grpcServer.GracefulStop()
 	j.listener.Close()
@@ -203,6 +203,7 @@ func (j *JobCoordinator) SendJobsToWorkers() {
 				j.roundRobinIndex++
 			}
 		case <-j.context.Done():
+			fmt.Println("Stopping job scheduler from SendJobsToWorkers")
 			return
 		}
 	}
@@ -215,7 +216,7 @@ func (j *JobCoordinator) GetNextJobs() {
 	for {
 		select {
 		case <-j.context.Done():
-			fmt.Println("Stopping job scheduler")
+			fmt.Println("Stopping job scheduler from GetNextJobs")
 			return
 		case t := <-ticker.C:
 			tx, err := j.db.Begin()

@@ -106,7 +106,7 @@ func (j *JobWorker) StartReceivingJobs() {
 			job, err := stream.Recv()
 			if err != nil {
 				fmt.Println("Failed to receive jobs: ", err)
-				return
+				continue
 			}
 			// Do something with the job
 			fmt.Println("Received job: ", job)
