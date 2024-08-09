@@ -98,10 +98,14 @@ func (j *JobWorker) StartReceivingJobs() {
 		select {
 		case <-j.context.Done():
 			return
+		case <-stream.Context().Done():
+			fmt.Println("Coordinator disconnected")
+			return
 		default:
 			jobs, err := stream.Recv()
 			if err != nil {
-				panic(err)
+				fmt.Println("Failed to receive jobs: ", err)
+				return
 			}
 			// Do something with the job
 			for _, job := range jobs.Jobs {

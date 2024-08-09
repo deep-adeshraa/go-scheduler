@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// 	_, err = j.db.Exec("UPDATE personal_test_job_schedules SET started_at=NOW() WHERE id = $1", job.Id)
-
 func function1() error {
 	time.Sleep(1 * time.Second)
 	fmt.Println("Function 1")
