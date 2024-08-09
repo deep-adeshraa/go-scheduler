@@ -21,7 +21,7 @@ func main() {
 		c.Start()
 	} else if args[0] == "worker" {
 		w := worker.NewJobWorker(args[1])
-		w.StartReceivingJobs()
+		w.Start(1)
 	} else {
 		fmt.Println("Invalid argument")
 	}

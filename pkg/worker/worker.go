@@ -85,10 +85,31 @@ func (j *JobWorker) ProcessJob(job *api_grpc.Job) {
 	fmt.Println("Job processed successfully")
 }
 
-func (j *JobWorker) StartReceivingJobs() {
-	j.connectToCoordinator()
-	defer j.grpc_conn.Close()
+func (j *JobWorker) Stop() {
+	j.cancel()
+	j.grpc_conn.Close()
+}
 
+func (j *JobWorker) Start(workerCount int) {
+	fmt.Println("Spawning ", workerCount, " workers")
+	j.connectToCoordinator()
+
+	for i := 0; i < workerCount; i++ {
+		j.spawnWorker()
+	}
+	// wait for the context to be cancelled
+	<-j.context.Done()
+
+	j.Stop()
+}
+
+func (j *JobWorker) spawnWorker() {
+	// TODO: not a good way to spawn workers, ideally it should be a go routines which works
+	// on a same stream
+	go j.startReceivingJobs()
+}
+
+func (j *JobWorker) startReceivingJobs() {
 	stream, err := j.grpc_client.GetUpcomingJobs(j.context, &api_grpc.Worker{Name: j.workerID})
 
 	if err != nil {
@@ -101,6 +122,7 @@ func (j *JobWorker) StartReceivingJobs() {
 			return
 		case <-stream.Context().Done():
 			fmt.Println("Coordinator disconnected")
+			j.cancel()
 			return
 		default:
 			job, err := stream.Recv()
