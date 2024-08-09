@@ -18,10 +18,6 @@ message Job {
     string scheduled_at = 3;
 }
 
-message UpcomingJobs {
-  repeated Job jobs = 1;
-}
-
 message Worker {
     string name = 1;
 }
@@ -32,6 +28,6 @@ message UpdateJobStatusRequest {
 }
 
 service ScheduleJobService {
-    rpc GetUpcomingJobs(Worker) returns (stream UpcomingJobs);
+    rpc GetUpcomingJobs(Worker) returns (stream Job);
     rpc UpdateJobStatus(UpdateJobStatusRequest) returns (Job);
 }

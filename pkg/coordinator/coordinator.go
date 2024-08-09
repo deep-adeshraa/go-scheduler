@@ -21,9 +21,9 @@ import (
 type workerStream api_grpc.ScheduleJobService_GetUpcomingJobsServer
 
 type RegisteredWorkerSteam struct {
-	worker       *api_grpc.Worker
-	stream       workerStream
-	upcomingJobs chan *api_grpc.UpcomingJobs
+	worker      *api_grpc.Worker
+	stream      workerStream
+	upcomingJob chan *api_grpc.Job
 }
 
 type JobCoordinator struct {
@@ -37,6 +37,7 @@ type JobCoordinator struct {
 	workerStreams   []RegisteredWorkerSteam
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
+	upcomingJobs    chan []*api_grpc.Job
 	roundRobinIndex int
 }
 
@@ -51,6 +52,7 @@ func NewJobCoordinator() *JobCoordinator {
 		workerStreams:   []RegisteredWorkerSteam{},
 		wg:              sync.WaitGroup{},
 		roundRobinIndex: 0,
+		upcomingJobs:    make(chan []*api_grpc.Job),
 	}
 }
 
@@ -62,7 +64,13 @@ func (j *JobCoordinator) Start() error {
 	}
 	j.db = db
 	j.StartGRPCServer()
+	j.wg.Add(2)
 
+	// start the go routine to get the next jobs
+	go j.GetNextJobs()
+	go j.SendJobsToWorkers()
+
+	fmt.Println("Job coordinator started")
 	return j.awaitShutdown()
 }
 
@@ -104,22 +112,19 @@ func (j *JobCoordinator) GetUpcomingJobs(worker *api_grpc.Worker, stream api_grp
 	registeredWorkerStream := RegisteredWorkerSteam{
 		worker,
 		stream,
-		make(chan *api_grpc.UpcomingJobs),
+		make(chan *api_grpc.Job),
 	}
 
+	// register the worker stream
 	j.workerStreams = append(j.workerStreams, registeredWorkerStream)
 
 	fmt.Println("total workers: ", len(j.workerStreams))
 
-	j.wg.Add(1)
-	// fire a go routine to get the next jobs
-	go j.GetNextJobs(registeredWorkerStream)
-
 	// Keep the stream open
 	for {
 		select {
-		case upcomingJobs := <-registeredWorkerStream.upcomingJobs:
-			if err := stream.Send(upcomingJobs); err != nil {
+		case upcomingJob := <-registeredWorkerStream.upcomingJob:
+			if err := stream.Send(upcomingJob); err != nil {
 				return err
 			}
 		// Wait for the client to close the stream
@@ -166,7 +171,7 @@ func (j *JobCoordinator) Stop() error {
 	// send a signal to all the go routines to stop
 	j.cancel()
 
-	j.wg.Wait() // wait for all the go routines to finish
+	// j.wg.Wait() // wait for all the go routines to finish
 
 	j.grpcServer.GracefulStop()
 	j.listener.Close()
@@ -180,15 +185,39 @@ func (j *JobCoordinator) Stop() error {
 	return nil
 }
 
-func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
+func (j *JobCoordinator) SendJobsToWorkers() {
+	defer j.wg.Done()
+
+	for {
+		select {
+		case jobs := <-j.upcomingJobs:
+			if len(j.workerStreams) == 0 {
+				fmt.Println("No workers available")
+				continue
+			}
+			for _, job := range jobs {
+				steamIndex := j.roundRobinIndex % len(j.workerStreams)
+				workerStream := j.workerStreams[steamIndex]
+				fmt.Printf("Sending job %s to worker %s\n", job.Id, workerStream.worker.Name)
+				workerStream.upcomingJob <- job
+				j.roundRobinIndex++
+			}
+		case <-j.context.Done():
+			return
+		}
+	}
+}
+
+func (j *JobCoordinator) GetNextJobs() {
 	defer j.wg.Done()
 	ticker := time.NewTicker(10 * time.Second)
 
 	for {
 		select {
 		case <-j.context.Done():
+			fmt.Println("Stopping job scheduler")
 			return
-		case <-ticker.C:
+		case t := <-ticker.C:
 			tx, err := j.db.Begin()
 			if err != nil {
 				panic(err)
@@ -219,7 +248,6 @@ func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 
 				jobs = append(jobs, &job)
 			}
-
 			if len(jobs) == 0 {
 				err = tx.Commit()
 				if err != nil {
@@ -242,10 +270,9 @@ func (j *JobCoordinator) GetNextJobs(r RegisteredWorkerSteam) {
 				fmt.Println("Failed to commit transaction: ", err)
 				return
 			}
-
-			r.upcomingJobs <- &api_grpc.UpcomingJobs{Jobs: jobs}
-		default:
-			return
+			fmt.Printf("Got %d jobs at %s\n", len(jobs), t)
+			j.upcomingJobs <- jobs
 		}
 	}
+
 }

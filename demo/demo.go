@@ -18,7 +18,7 @@ func main() {
 		s.Start()
 	} else if args[0] == "coordinator" {
 		c := coordinator.NewJobCoordinator()
-		c.StartGRPCServer()
+		c.Start()
 	} else if args[0] == "worker" {
 		w := worker.NewJobWorker(args[1])
 		w.StartReceivingJobs()

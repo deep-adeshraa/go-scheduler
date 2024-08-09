@@ -40,6 +40,7 @@ func (j *JobWorker) connectToCoordinator() {
 
 	j.grpc_conn = conn
 	j.grpc_client = api_grpc.NewScheduleJobServiceClient(j.grpc_conn)
+	fmt.Println("Connected to coordinator")
 }
 
 func (j *JobWorker) ProcessJob(job *api_grpc.Job) {
@@ -102,16 +103,14 @@ func (j *JobWorker) StartReceivingJobs() {
 			fmt.Println("Coordinator disconnected")
 			return
 		default:
-			jobs, err := stream.Recv()
+			job, err := stream.Recv()
 			if err != nil {
 				fmt.Println("Failed to receive jobs: ", err)
 				return
 			}
 			// Do something with the job
-			for _, job := range jobs.Jobs {
-				fmt.Println("Received job: ", job)
-				j.ProcessJob(job)
-			}
+			fmt.Println("Received job: ", job)
+			j.ProcessJob(job)
 		}
 	}
 }
